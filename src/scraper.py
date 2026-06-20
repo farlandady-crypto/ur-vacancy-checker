@@ -1,153 +1,200 @@
-import requests
-import json
+import re
 from typing import List, Dict, Tuple
 from datetime import datetime
-import re
-from .config import HEADERS, UR_TARGETS
+from bs4 import BeautifulSoup
+from selenium import webdriver
+from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
+from selenium.common.exceptions import TimeoutException
+import os
+import time
+
+from .config import UR_TARGETS
 
 def fetch_rooms(target: Dict) -> Tuple[List[Dict], str]:
     """
-    通过API获取空房数据 - 完全模拟浏览器请求
+    使用Selenium获取动态加载的空房数据
     """
-    api_url = "https://chintai.r6.ur-net.go.jp/chintai/api/bukken/detail/detail_bukken_room/"
-    
-    # 【关键】使用正确的danchi值（去掉末尾0）
-    danchi_value = target['params']['danchi']
-    if danchi_value.endswith('0'):
-        danchi_value = danchi_value[:-1]
-    
-    params = {
-        'block': target['params']['block'],
-        'tdfk': target['params']['tdfk'],
-        'shisya': target['params']['shisya'],
-        'danchi': danchi_value,
-        'pageIndex': '0',
-        'shikibetu': '0'
-    }
-    
-    # 【关键】完全复制浏览器中的请求头
-    headers = {
-        'Accept': 'application/json, text/plain, */*',
-        'Accept-Encoding': 'gzip, deflate, br',
-        'Accept-Language': 'ja-JP,ja;q=0.9,en;q=0.8',
-        'Connection': 'keep-alive',
-        'Content-Type': 'application/json',
-        'Origin': 'https://www.ur-net.go.jp',
-        'Referer': target['url'],
-        'Sec-Fetch-Dest': 'empty',
-        'Sec-Fetch-Mode': 'cors',
-        'Sec-Fetch-Site': 'same-site',
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        'X-Requested-With': 'XMLHttpRequest',
-    }
-    
-    print(f"   📡 请求API: {api_url}")
-    print(f"   📦 参数: {params}")
-    
+    driver = None
     try:
-        session = requests.Session()
+        # 配置Chrome选项
+        options = Options()
+        options.add_argument('--headless')
+        options.add_argument('--no-sandbox')
+        options.add_argument('--disable-dev-shm-usage')
+        options.add_argument('--disable-gpu')
+        options.add_argument('--window-size=1920,1080')
+        options.add_argument('--disable-blink-features=AutomationControlled')
         
-        # 先访问主页面，获取必要的Cookie和会话
-        print("   🔄 正在获取会话...")
-        main_response = session.get(target['url'], headers=HEADERS, timeout=10)
-        print(f"   📊 主页面状态码: {main_response.status_code}")
+        chrome_path = os.environ.get('CHROME_PATH', '/usr/bin/chromium-browser')
+        if os.path.exists(chrome_path):
+            options.binary_location = chrome_path
         
-        # 发送POST请求
-        print("   📡 发送POST请求...")
-        response = session.post(
-            api_url,
-            headers=headers,
-            json=params,  # 以JSON格式发送
-            timeout=15
-        )
+        driver = webdriver.Chrome(options=options)
+        print(f"   🌐 正在加载页面: {target['url']}")
+        driver.get(target['url'])
         
-        print(f"   📊 API状态码: {response.status_code}")
-        print(f"   📊 响应长度: {len(response.text)} 字符")
+        # 等待页面加载
+        wait = WebDriverWait(driver, 15)
+        wait.until(EC.presence_of_element_located((By.TAG_NAME, "table")))
+        print("   ✅ 页面加载完成")
         
-        if response.status_code != 200:
-            return [], f"API请求失败，状态码: {response.status_code}"
+        # 获取渲染后的HTML
+        html = driver.page_source
+        soup = BeautifulSoup(html, 'html.parser')
         
-        # 检查响应内容
-        if not response.text or response.text.strip() == 'null':
-            print("   ⚠️ API返回null，尝试修改danchi参数...")
-            # 尝试不修改danchi（使用原始值）
-            params['danchi'] = target['params']['danchi']
-            response = session.post(
-                api_url,
-                headers=headers,
-                json=params,
-                timeout=15
-            )
-            print(f"   📊 重试状态码: {response.status_code}")
-            print(f"   📊 重试响应长度: {len(response.text)} 字符")
+        # 【关键修正】直接查找包含空房信息的表格
+        # 从您提供的页面内容来看，空房在表格中，表头包含"間取図"、"部屋名"等
+        table = None
+        tables = soup.find_all('table')
+        for t in tables:
+            text = t.get_text()
+            if '部屋名' in text and '家賃' in text:
+                table = t
+                break
         
-        if response.status_code != 200 or not response.text or response.text.strip() == 'null':
-            return [], "API返回空数据，可能该物件暂无空房或参数仍需调整"
+        if not table:
+            # 如果找不到表格，尝试用正则从页面文本提取
+            page_text = soup.get_text(separator=' ', strip=True)
+            rooms = extract_rooms_with_regex(page_text, target)
+            if rooms:
+                return rooms, f"通过正则表达式发现 {len(rooms)} 套空房"
+            return [], "未找到空房表格，且无法通过正则提取"
         
-        # 解析JSON
-        try:
-            data = response.json()
-            print(f"   📊 数据类型: {type(data)}")
-        except json.JSONDecodeError as e:
-            print(f"   ❌ JSON解析失败: {e}")
-            return [], f"JSON解析失败: {response.text[:200]}"
-        
-        # 处理响应数据
-        rooms_data = []
-        if isinstance(data, list):
-            rooms_data = data
-            print(f"   ✅ 直接获得数组，包含 {len(rooms_data)} 项")
-        elif isinstance(data, dict):
-            # 尝试多种可能的字段
-            for key in ['room', 'rooms', 'data', 'result', 'list']:
-                if key in data and data[key]:
-                    rooms_data = data[key]
-                    print(f"   ✅ 从 '{key}' 字段提取数据，包含 {len(rooms_data)} 项")
-                    break
-            if not rooms_data:
-                print(f"   ⚠️ 响应包含的键: {list(data.keys())}")
-                return [], f"未找到房间数据，响应键: {list(data.keys())}"
+        # 解析表格（修正版）
+        rooms = parse_room_table_v2(table, target)
+        if rooms:
+            return rooms, f"发现 {len(rooms)} 套空房"
         else:
-            return [], f"未知数据类型: {type(data)}"
+            # 表格解析失败，尝试正则
+            page_text = soup.get_text(separator=' ', strip=True)
+            rooms = extract_rooms_with_regex(page_text, target)
+            if rooms:
+                return rooms, f"通过正则表达式发现 {len(rooms)} 套空房"
+            return [], "表格解析失败，且正则提取也为空"
         
-        if not rooms_data:
-            return [], "暂无空房"
-        
-        # 格式化房间信息
-        formatted_rooms = []
-        for room in rooms_data:
-            room_id = room.get('id', '')
-            if not room_id:
-                link = room.get('roomDetailLink', '')
-                id_match = re.search(r'JKSS=(\d+)', link)
-                if id_match:
-                    room_id = id_match.group(1)
-                else:
-                    room_id = f"{danchi_value}_{room.get('name', 'unknown')}"
-            
-            formatted_room = {
-                'id': str(room_id),
-                'name': room.get('name', '未知房号'),
-                'rent': room.get('rent', '不明'),
-                'common_fee': room.get('commonfee', '不明'),
-                'type': room.get('type', '不明'),
-                'floor_space': room.get('floorspace', '').replace('&#13217;', '㎡'),
-                'floor': room.get('floor', '不明'),
-                'status': room.get('status', '常规募集'),
-                'url': room.get('roomDetailLink', ''),
-                'shikikin': room.get('shikikin', '不明'),
-                'requirement': room.get('requirement', '不明'),
-                'madori': room.get('madori', '')
-            }
-            formatted_rooms.append(formatted_room)
-            print(f"   ✅ 解析房间: {formatted_room['name']} - {formatted_room['rent']}")
-        
-        return formatted_rooms, f"成功发现 {len(formatted_rooms)} 套空房"
-        
-    except requests.exceptions.RequestException as e:
-        return [], f"请求异常: {str(e)}"
     except Exception as e:
-        return [], f"处理异常: {str(e)}"
+        return [], f"Selenium抓取失败: {str(e)}"
+    finally:
+        if driver:
+            driver.quit()
+
+def parse_room_table_v2(table_element, target: Dict) -> List[Dict]:
+    """修正版的表格解析函数"""
+    rooms = []
+    rows = table_element.find_all('tr')
+    if len(rows) < 2:
+        return rooms
+    
+    # 直接遍历所有行，查找包含"号室"的行
+    for row in rows:
+        row_text = row.get_text()
+        # 检查是否是房间行（包含"号室"）
+        if '号室' not in row_text:
+            continue
+        
+        cells = row.find_all('td')
+        if len(cells) < 5:
+            continue
+        
+        # 提取房间名
+        name = cells[1].get_text(strip=True) if len(cells) > 1 else ''
+        if not name or '号室' not in name:
+            # 尝试从其他列提取
+            for cell in cells:
+                text = cell.get_text(strip=True)
+                if '号室' in text:
+                    name = text
+                    break
+        
+        if not name or '号室' not in name:
+            continue
+        
+        # 提取租金
+        rent_text = ''
+        for cell in cells:
+            text = cell.get_text(strip=True)
+            if '円' in text and '号室' not in text:
+                rent_text = text
+                break
+        
+        rent_match = re.search(r'([\d,]+)円', rent_text)
+        rent = rent_match.group(1) + '円' if rent_match else '不明'
+        
+        fee_match = re.search(r'\(([\d,]+)円\)', rent_text)
+        common_fee = fee_match.group(1) + '円' if fee_match else '不明'
+        
+        # 提取户型、面积、楼层
+        room_type = ''
+        floor_space = ''
+        floor = ''
+        
+        for cell in cells:
+            text = cell.get_text(strip=True)
+            if 'K' in text or 'LDK' in text:
+                room_type = text
+            elif '㎡' in text:
+                floor_space = text
+            elif '階' in text and '号室' not in text:
+                floor = text
+        
+        # 提取房间ID
+        link_tag = row.find('a')
+        room_link = link_tag['href'] if link_tag and link_tag.get('href') else ''
+        room_id = extract_room_id(room_link) or f"{target['params']['danchi']}_{name}"
+        
+        room = {
+            'id': room_id,
+            'name': name,
+            'rent': rent,
+            'common_fee': common_fee,
+            'type': room_type,
+            'floor_space': floor_space.replace('&#13217;', '㎡'),
+            'floor': floor,
+            'status': '常规募集',
+            'url': room_link,
+            'shikikin': '不明',
+            'requirement': '不明'
+        }
+        rooms.append(room)
+        print(f"   ✅ 解析房间: {name} - {rent}")
+    
+    return rooms
+
+def extract_rooms_with_regex(page_text: str, target: Dict) -> List[Dict]:
+    """使用正则表达式提取房间信息"""
+    rooms = []
+    # 更灵活的正则模式
+    pattern = r'(\d+号室)\s*[|｜]\s*([\d,]+)円\s*\(([\d,]+)円\)\s*[|｜]\s*([^\|｜]+)\s*[|｜]\s*([\d.]+)㎡\s*[|｜]\s*([^\|｜]+?)(?:階|階／)'
+    
+    matches = re.findall(pattern, page_text)
+    for match in matches:
+        name, rent, fee, r_type, space, floor = match
+        room_id = f"{target['params']['danchi']}_{name}"
+        rooms.append({
+            'id': room_id,
+            'name': name.strip(),
+            'rent': f"{rent}円",
+            'common_fee': f"{fee}円",
+            'type': r_type.strip(),
+            'floor_space': f"{space}㎡",
+            'floor': f"{floor}階",
+            'status': '常规募集',
+            'url': '',
+            'shikikin': '不明',
+            'requirement': '不明'
+        })
+    
+    return rooms
+
+def extract_room_id(url: str) -> str:
+    """从URL中提取房间ID"""
+    if not url:
+        return None
+    match = re.search(r'JKSS=(\d+)', url)
+    return match.group(1) if match else None
 
 def format_room_info(room: Dict) -> Dict:
     """格式化房间信息"""

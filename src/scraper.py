@@ -7,12 +7,10 @@ from .config import HEADERS, UR_TARGETS
 
 def fetch_rooms(target: Dict) -> Tuple[List[Dict], str]:
     """
-    模拟浏览器行为获取空房数据
+    通过POST请求获取空房数据
     """
-    # 使用正确的API地址
     api_url = "https://chintai.r6.ur-net.go.jp/chintai/api/bukken/detail/detail_bukken_room/"
     
-    # 构建请求参数（从您成功抓取的请求中复制）
     params = {
         'block': target['params']['block'],
         'tdfk': target['params']['tdfk'],
@@ -22,78 +20,71 @@ def fetch_rooms(target: Dict) -> Tuple[List[Dict], str]:
         'shikibetu': '0'
     }
     
-    # 完整的请求头（模拟浏览器）
     headers = {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
         'Accept': 'application/json, text/plain, */*',
         'Accept-Language': 'ja-JP,ja;q=0.9,en;q=0.8',
-        'Accept-Encoding': 'gzip, deflate, br',
         'Referer': target['url'],
         'Origin': 'https://www.ur-net.go.jp',
-        'Connection': 'keep-alive',
-        'Sec-Fetch-Dest': 'empty',
-        'Sec-Fetch-Mode': 'cors',
-        'Sec-Fetch-Site': 'same-site',
         'X-Requested-With': 'XMLHttpRequest',
+        'Content-Type': 'application/json',
     }
     
     print(f"   📡 请求API: {api_url}")
     print(f"   📦 参数: {params}")
     
     try:
-        # 创建会话，保持Cookie
         session = requests.Session()
         
-        # 先访问主页面获取Cookie（重要！）
+        # 先访问主页面获取Cookie
         print("   🔄 先访问主页面获取会话...")
         main_response = session.get(target['url'], headers=HEADERS, timeout=10)
         print(f"   📊 主页面状态码: {main_response.status_code}")
         
-        # 然后请求API
-        print("   📡 请求API...")
-        response = session.get(api_url, headers=headers, params=params, timeout=15)
-        
-        print(f"   📊 API状态码: {response.status_code}")
-        
-        if response.status_code != 200:
-            # 如果GET失败，尝试POST
-            print("   ⚠️ GET失败，尝试POST...")
-            response = session.post(api_url, headers=headers, json=params, timeout=15)
-            print(f"   📊 POST状态码: {response.status_code}")
+        # POST请求
+        print("   📡 发送POST请求...")
+        response = session.post(api_url, headers=headers, json=params, timeout=15)
+        print(f"   📊 POST状态码: {response.status_code}")
         
         if response.status_code != 200:
             return [], f"API请求失败，状态码: {response.status_code}"
         
-        # 检查返回内容
-        if not response.text or not response.text.strip():
-            return [], "API返回空内容"
+        # 【调试】打印原始响应
+        print(f"   📄 响应内容（前500字符）: {response.text[:500]}")
         
-        # 尝试解析JSON
+        # 解析JSON
         try:
             data = response.json()
-        except json.JSONDecodeError:
-            # 如果返回的不是JSON，可能是其他格式
-            print(f"   ⚠️ 非JSON响应，前200字符: {response.text[:200]}")
-            return [], "API返回非JSON数据"
+            print(f"   📊 数据类型: {type(data)}")
+            if isinstance(data, dict):
+                print(f"   📊 数据键: {list(data.keys())}")
+            elif isinstance(data, list):
+                print(f"   📊 数据长度: {len(data)}")
+        except json.JSONDecodeError as e:
+            print(f"   ❌ JSON解析失败: {e}")
+            return [], f"JSON解析失败: {response.text[:200]}"
         
-        # 处理响应数据
+        # 处理响应数据（根据实际格式调整）
         rooms_data = []
         if isinstance(data, list):
             rooms_data = data
         elif isinstance(data, dict):
-            # 尝试多种可能的字段
-            if 'room' in data:
-                rooms_data = data['room']
-            elif 'data' in data:
-                rooms_data = data['data']
-            elif 'result' in data:
-                rooms_data = data['result']
-            else:
-                # 如果data本身包含房间信息，尝试直接使用
+            # 尝试常见的字段名
+            for key in ['room', 'rooms', 'data', 'result', 'list', 'items']:
+                if key in data and data[key]:
+                    rooms_data = data[key]
+                    print(f"   ✅ 从 '{key}' 字段提取数据")
+                    break
+            if not rooms_data:
+                # 如果data本身包含房间信息
                 if 'id' in data or 'name' in data:
                     rooms_data = [data]
+                    print("   ✅ data本身包含房间信息")
                 else:
-                    return [], f"无法解析数据格式: {list(data.keys()) if isinstance(data, dict) else '未知'}"
+                    print(f"   ⚠️ 未能从data中找到房间数据，data包含: {list(data.keys())}")
+                    return [], f"未找到房间数据，响应键: {list(data.keys())}"
+        else:
+            return [], f"未知数据类型: {type(data)}"
         
         if not rooms_data:
             return [], "暂无空房"

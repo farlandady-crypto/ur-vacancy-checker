@@ -1,14 +1,18 @@
 #!/usr/bin/env python3
 """
 UR空房监控主程序
-运行在GitHub Actions上，每5分钟执行一次
 """
 import sys
+import os
 from datetime import datetime
-from .config import validate_config
-from .scraper import check_all_targets
-from .storage import save_status, find_new_rooms, save_current_rooms, load_previous_rooms
-from .telegram import send_vacancy_notification, check_and_reply_commands, send_status_report
+
+# 添加项目根目录到Python路径
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from src.config import validate_config
+from src.scraper import check_all_targets
+from src.storage import save_status, find_new_rooms, save_current_rooms, load_previous_rooms
+from src.telegram import send_vacancy_notification, check_and_reply_commands
 
 def main():
     print(f"🚀 UR空房监控启动 - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
@@ -20,7 +24,11 @@ def main():
         print("✅ 配置验证通过")
     except Exception as e:
         print(f"❌ 配置错误: {e}")
-        sys.exit(1)
+        # 如果是Telegram配置问题，仅警告不退出
+        if "TELEGRAM" in str(e).upper():
+            print("⚠️ Telegram未配置，将跳过通知功能")
+        else:
+            sys.exit(1)
     
     # 2. 检查所有目标物件
     print("\n🔍 开始检查空房...")
@@ -47,9 +55,12 @@ def main():
     else:
         print("\n✅ 没有发现新空房")
     
-    # 6. 处理Telegram命令
+    # 6. 处理Telegram命令（即使没有新空房也处理）
     print("\n📨 检查Telegram命令...")
-    check_and_reply_commands()
+    try:
+        check_and_reply_commands()
+    except Exception as e:
+        print(f"⚠️ 处理命令时出错: {e}")
     
     # 7. 打印汇总
     total = sum(data['count'] for data in results.values())
@@ -58,6 +69,7 @@ def main():
         print(f"   {object_name}: {data['count']} 套")
     
     print("\n✅ 执行完成")
+    return 0
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

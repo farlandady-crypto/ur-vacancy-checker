@@ -34,7 +34,7 @@ UR_TARGETS = [
             "block": "kanto",
             "tdfk": "kanagawa",
             "shisya": "40",
-            "danchi": "427"
+            "danchi": "4270"
         }
     }
 ]

@@ -21,7 +21,6 @@ jobs:
       with:
         python-version: '3.10'
     
-    # 新增：安装Chrome浏览器
     - name: Setup Chrome
       run: |
         sudo apt-get update
@@ -37,13 +36,13 @@ jobs:
         TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
         TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
       run: |
+        mkdir -p data
         python -m src.main
         
     - name: Commit and push status
       run: |
         git config --local user.email "action@github.com"
         git config --local user.name "GitHub Action"
-        mkdir -p data
         git add data/
         git diff --staged --quiet || git commit -m "Update vacancy status [skip ci]"
         git push https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git HEAD:main

@@ -1,7 +1,6 @@
 import os
 import json
 import requests
-from bs4 import BeautifulSoup
 
 BOT_TOKEN = os.environ["BOT_TOKEN"]
 CHAT_ID = os.environ["CHAT_ID"]
@@ -9,71 +8,115 @@ CHAT_ID = os.environ["CHAT_ID"]
 STATE_FILE = "state.json"
 
 TARGETS = {
-    "かわさきテクノピア堀川町ハイツ":
-        "https://www.ur-net.go.jp/chintai/kanto/kanagawa/40_2480_room.html",
-
-    "川崎旭町ハイツ":
-        "https://www.ur-net.go.jp/chintai/kanto/kanagawa/40_2600_room.html"
+    "かわさきテクノピア堀川町ハイツ": {
+        "shisya": "40",
+        "danchi": "248"
+    },
+    "川崎旭町ハイツ": {
+        "shisya": "40",
+        "danchi": "260"
+    }
 }
 
+API_URL = "https://chintai.r6.ur-net.go.jp/chintai/api/bukken/detail/detail_bukken_room/"
 
-def send_telegram(text):
+
+def send_telegram(msg):
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
 
     requests.post(
         url,
         json={
             "chat_id": CHAT_ID,
-            "text": text
+            "text": msg
         },
         timeout=30
     )
 
 
-# 读取历史状态
-if os.path.exists(STATE_FILE):
-    with open(STATE_FILE, "r", encoding="utf-8") as f:
-        state = json.load(f)
-else:
-    state = {}
+def load_state():
+    if os.path.exists(STATE_FILE):
+        with open(STATE_FILE, "r", encoding="utf-8") as f:
+            return json.load(f)
 
+    return {}
+
+
+def save_state(state):
+    with open(STATE_FILE, "w", encoding="utf-8") as f:
+        json.dump(state, f, ensure_ascii=False, indent=2)
+
+
+def get_rooms(shisya, danchi):
+    payload = {
+        "shisya": shisya,
+        "danchi": danchi,
+        "shikibetu": "0",
+        "pageIndex": "0"
+    }
+
+    r = requests.post(API_URL, data=payload, timeout=30)
+
+    data = r.json()
+
+    if data is None:
+        return []
+
+    return data
+
+
+old_state = load_state()
 new_state = {}
 
-headers = {
-    "User-Agent": "Mozilla/5.0"
-}
+for danchi_name, target in TARGETS.items():
 
-for name, url in TARGETS.items():
+    rooms = get_rooms(
+        target["shisya"],
+        target["danchi"]
+    )
 
-    r = requests.get(url, headers=headers, timeout=30)
-    r.raise_for_status()
+    room_ids = set()
 
-    soup = BeautifulSoup(r.text, "html.parser")
+    for room in rooms:
 
-    text = soup.get_text()
+        room_id = room["id"]
 
-    has_room = "現在、募集中の住宅はありません" not in text
+        room_ids.add(room_id)
 
-    new_state[name] = has_room
+        old_ids = set(old_state.get(danchi_name, []))
 
-    old_has_room = state.get(name, False)
+        if room_id not in old_ids:
 
-    # 之前没房，现在有房
-    if has_room and not old_has_room:
+            link = (
+                "https://www.ur-net.go.jp"
+                + room["roomDetailLink"]
+            )
 
-        msg = f"""🏠 UR空室通知
+            msg = f"""🏠 UR空室通知
 
 団地：
+{danchi_name}
+
 {name}
 
-发现新的空房！
+間取り：
+{room["type"]}
 
-立即查看：
-{url}
+面積：
+{room["floorspace"]}
+
+階数：
+{room["floor"]}
+
+家賃：
+{room["rent"]}
+
+詳細：
+{link}
 """
 
-        send_telegram(msg)
+            send_telegram(msg)
 
-# 保存状态
-with open(STATE_FILE, "w", encoding="utf-8") as f:
-    json.dump(new_state, f, ensure_ascii=False)
+    new_state[danchi_name] = list(room_ids)
+
+save_state(new_state)

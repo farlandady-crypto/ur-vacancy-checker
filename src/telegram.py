@@ -83,11 +83,15 @@ def send_status_report():
     send_telegram_message("\n".join(lines))
 
 def check_and_reply_commands():
-    """检查并回复Telegram命令"""
+    """检查并回复Telegram命令（防止重复发送）"""
     if not TELEGRAM_BOT_TOKEN:
         return
     
-    # 获取最新的消息
+    # 添加一个标记，防止同一次运行重复处理
+    if hasattr(check_and_reply_commands, '_processed'):
+        return
+    check_and_reply_commands._processed = True
+    
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/getUpdates"
     
     try:
@@ -98,7 +102,15 @@ def check_and_reply_commands():
         if not updates.get('ok'):
             return
         
+        # 记录已处理的update_id，防止重复
+        processed_ids = set()
+        
         for update in updates.get('result', []):
+            update_id = update.get('update_id')
+            if update_id in processed_ids:
+                continue
+            processed_ids.add(update_id)
+            
             message = update.get('message')
             if not message:
                 continue
@@ -106,11 +118,9 @@ def check_and_reply_commands():
             text = message.get('text', '')
             chat_id = str(message.get('chat', {}).get('id', ''))
             
-            # 只处理发给我们的chat_id的命令
             if chat_id != TELEGRAM_CHAT_ID:
                 continue
             
-            # 处理命令
             if text == '/status':
                 send_status_report()
             elif text == '/help':

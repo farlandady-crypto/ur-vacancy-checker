@@ -2,12 +2,9 @@ name: UR Vacancy Checker
 
 on:
   schedule:
-    # 每天10:00-19:59，每5分钟执行一次
     - cron: '*/5 10-19 * * *'
-  # 支持手动触发（用于测试）
   workflow_dispatch:
 
-# 授予写入仓库的权限（用于提交状态文件）
 permissions:
   contents: write
 
@@ -16,22 +13,25 @@ jobs:
     runs-on: ubuntu-latest
     
     steps:
-    # 1. 检出代码
     - name: Checkout repository
       uses: actions/checkout@v3
       
-    # 2. 设置Python环境
     - name: Setup Python
       uses: actions/setup-python@v4
       with:
         python-version: '3.10'
     
-    # 3. 安装依赖
+    # 新增：安装Chrome浏览器
+    - name: Setup Chrome
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y chromium-browser chromium-chromedriver
+        echo "CHROME_PATH=/usr/bin/chromium-browser" >> $GITHUB_ENV
+        
     - name: Install dependencies
       run: |
         pip install -r requirements.txt
         
-    # 4. 运行主程序（检查空房 + 处理Telegram命令）
     - name: Run vacancy checker
       env:
         TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
@@ -39,28 +39,12 @@ jobs:
       run: |
         python -m src.main
         
-    # 5. 提交并推送状态文件到仓库
     - name: Commit and push status
       run: |
-        # 配置Git用户信息
         git config --local user.email "action@github.com"
         git config --local user.name "GitHub Action"
-        
-        # 确保data目录存在（即使没有文件也创建）
         mkdir -p data
-        
-        # 添加所有状态文件
         git add data/
-        
-        # 检查是否有变更需要提交
-        if git diff --staged --quiet; then
-          echo "📝 没有需要提交的状态变更"
-        else
-          echo "📤 提交状态文件到仓库..."
-          git commit -m "Update vacancy status [skip ci]"
-          # 使用GITHUB_TOKEN推送
-          git push https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git HEAD:main
-          echo "✅ 状态文件已成功提交"
-        fi
-      # 即使提交失败也不中断工作流（避免影响下次运行）
+        git diff --staged --quiet || git commit -m "Update vacancy status [skip ci]"
+        git push https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git HEAD:main
       continue-on-error: true

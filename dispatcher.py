@@ -6,6 +6,7 @@ REPO = os.environ["GH_REPO"]
 
 API = f"https://api.github.com/repos/{REPO}/dispatches"
 
+print("DISPATCHER RUNNING")
 
 def dispatch(event_type, payload):
     requests.post(

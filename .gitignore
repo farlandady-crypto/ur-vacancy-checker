@@ -19,10 +19,14 @@ ENV/
 *.swp
 *.swo
 
-# Data files (except .gitkeep)
+# Data files (保留目录，但忽略json文件)
 data/*.json
+data/*.txt
 !data/.gitkeep
 
 # OS
 .DS_Store
 Thumbs.db
+
+# GitHub Actions
+*.log

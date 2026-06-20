@@ -2,9 +2,8 @@ name: UR Vacancy Checker
 
 on:
   schedule:
-    # 每天10:00-19:59，每5分钟执行一次
     - cron: '*/5 10-19 * * *'
-  workflow_dispatch:  # 支持手动触发
+  workflow_dispatch:
 
 jobs:
   check-vacancy:
@@ -28,7 +27,8 @@ jobs:
         TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
         TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
       run: |
-        python src/main.py
+        # 使用模块方式运行
+        python -m src.main
         
     - name: Commit and push status
       run: |

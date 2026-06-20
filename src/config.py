@@ -34,25 +34,23 @@ UR_TARGETS = [
             "block": "kanto",
             "tdfk": "kanagawa",
             "shisya": "40",
-            "danchi": "427"
+            "danchi": "4270"
         }
     }
 ]
 
 # 请求头
 HEADERS = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
     "Accept": "application/json, text/plain, */*",
     "Accept-Language": "ja-JP,ja;q=0.9,en;q=0.8",
-    "Referer": "https://www.ur-net.go.jp/",
-    "X-Requested-With": "XMLHttpRequest",
 }
 
-# 正确的API端点
-API_URL = "https://chintai.r6.ur-net.go.jp/chintai/api/bukken/detail/detail_bukken_room/"
+# API端点
+API_URL = "https://www.ur-net.go.jp/chintai/detail_bukken_room"
 
 def validate_config():
-    """验证必要的配置是否存在"""
+    """验证必要的配置是否存在（只警告，不报错）"""
     missing = []
     if not TELEGRAM_BOT_TOKEN:
         missing.append("TELEGRAM_BOT_TOKEN")

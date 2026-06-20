@@ -97,7 +97,8 @@ for danchi_name, target in TARGETS.items():
 団地：
 {danchi_name}
 
-{name}
+部屋：
+{room["name"]}
 
 間取り：
 {room["type"]}

@@ -51,8 +51,15 @@ API_URL = "https://www.ur-net.go.jp/chintai/detail_bukken_room"
 
 # 验证配置
 def validate_config():
-    """验证必要的配置是否存在"""
+    """验证必要的配置是否存在（改为警告而非硬错误）"""
+    missing = []
     if not TELEGRAM_BOT_TOKEN:
-        raise ValueError("TELEGRAM_BOT_TOKEN is not set")
+        missing.append("TELEGRAM_BOT_TOKEN")
     if not TELEGRAM_CHAT_ID:
-        raise ValueError("TELEGRAM_CHAT_ID is not set")
+        missing.append("TELEGRAM_CHAT_ID")
+    
+    if missing:
+        print(f"⚠️ 警告: 以下配置缺失，通知功能将不可用: {', '.join(missing)}")
+        # 不抛出异常，仅警告
+    else:
+        print("✅ Telegram配置完整")

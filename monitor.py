@@ -1,40 +1,79 @@
 import os
 import json
 import requests
-import smtplib
-from email.mime.text import MIMEText
 from bs4 import BeautifulSoup
 
-URL = "https://www.ur-net.go.jp/chintai/kanto/kanagawa/40_2480_room.html"
+BOT_TOKEN = os.environ["BOT_TOKEN"]
+CHAT_ID = os.environ["CHAT_ID"]
+
 STATE_FILE = "state.json"
 
-resp = requests.get(URL, headers={"User-Agent": "Mozilla/5.0"})
-resp.raise_for_status()
+TARGETS = {
+    "かわさきテクノピア堀川町ハイツ":
+        "https://www.ur-net.go.jp/chintai/kanto/kanagawa/40_2480_room.html",
 
-soup = BeautifulSoup(resp.text, "html.parser")
-text = soup.get_text("\n", strip=True)
+    "川崎旭町ハイツ":
+        "https://www.ur-net.go.jp/chintai/kanto/kanagawa/40_2600_room.html"
+}
 
-has_room = "現在、募集中の住宅はありません" not in text
 
-old_state = {"has_room": False}
+def send_telegram(text):
+    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
+
+    requests.post(
+        url,
+        json={
+            "chat_id": CHAT_ID,
+            "text": text
+        },
+        timeout=30
+    )
+
+
+# 读取历史状态
 if os.path.exists(STATE_FILE):
     with open(STATE_FILE, "r", encoding="utf-8") as f:
-        old_state = json.load(f)
+        state = json.load(f)
+else:
+    state = {}
 
-if has_room and not old_state["has_room"]:
-    body = f"""发现「かわさきテクノピア堀川町ハイツ」有空房！
+new_state = {}
 
-请立即查看：
-{URL}
+headers = {
+    "User-Agent": "Mozilla/5.0"
+}
+
+for name, url in TARGETS.items():
+
+    r = requests.get(url, headers=headers, timeout=30)
+    r.raise_for_status()
+
+    soup = BeautifulSoup(r.text, "html.parser")
+
+    text = soup.get_text()
+
+    has_room = "現在、募集中の住宅はありません" not in text
+
+    new_state[name] = has_room
+
+    old_has_room = state.get(name, False)
+
+    # 之前没房，现在有房
+    if has_room and not old_has_room:
+
+        msg = f"""🏠 UR空室通知
+
+団地：
+{name}
+
+发现新的空房！
+
+立即查看：
+{url}
 """
-    msg = MIMEText(body, "plain", "utf-8")
-    msg["Subject"] = "【UR空室通知】かわさきテクノピア堀川町ハイツ"
-    msg["From"] = os.environ["EMAIL_ADDRESS"]
-    msg["To"] = os.environ["RECEIVER_EMAIL"]
 
-    with smtplib.SMTP_SSL("smtp.gmail.com", 465) as smtp:
-        smtp.login(os.environ["EMAIL_ADDRESS"], os.environ["EMAIL_PASSWORD"])
-        smtp.send_message(msg)
+        send_telegram(msg)
 
+# 保存状态
 with open(STATE_FILE, "w", encoding="utf-8") as f:
-    json.dump({"has_room": has_room}, f)
+    json.dump(new_state, f, ensure_ascii=False)

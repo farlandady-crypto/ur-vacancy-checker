@@ -5,6 +5,10 @@ on:
     - cron: '*/5 10-19 * * *'
   workflow_dispatch:
 
+# 添加写权限
+permissions:
+  contents: write
+
 jobs:
   check-vacancy:
     runs-on: ubuntu-latest
@@ -27,7 +31,6 @@ jobs:
         TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
         TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
       run: |
-        # 使用模块方式运行
         python -m src.main
         
     - name: Commit and push status

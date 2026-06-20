@@ -87,11 +87,8 @@ def check_and_reply_commands():
     if not TELEGRAM_BOT_TOKEN:
         return
     
-    # 使用固定的offset文件路径
     import os
     offset_file = "data/offset.txt"
-    
-    # 确保目录存在
     os.makedirs("data", exist_ok=True)
     
     # 读取上次处理的update_id
@@ -101,7 +98,7 @@ def check_and_reply_commands():
             last_update_id = int(f.read().strip())
             print(f"   📖 读取offset: {last_update_id}")
     except:
-        print(f"   📄 首次运行，offset文件不存在")
+        print(f"   📄 首次运行，offset文件不存在，从0开始")
     
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/getUpdates"
     
@@ -123,12 +120,14 @@ def check_and_reply_commands():
             print("   📭 没有新命令")
             return
         
-        # 处理所有消息
+        # 【关键改进】先收集所有需要处理的命令，再统一处理
+        commands_to_process = []
         max_update_id = last_update_id
+        
         for update in updates.get('result', []):
             update_id = update.get('update_id')
             if update_id <= last_update_id:
-                continue  # 跳过已处理的
+                continue
             
             message = update.get('message')
             if not message:
@@ -137,32 +136,31 @@ def check_and_reply_commands():
             text = message.get('text', '')
             chat_id = str(message.get('chat', {}).get('id', ''))
             
-            # 只处理配置的chat_id
             if chat_id != TELEGRAM_CHAT_ID:
                 continue
             
+            commands_to_process.append((update_id, text))
+            if update_id > max_update_id:
+                max_update_id = update_id
+        
+        # 【关键改进】立即保存最新的offset，防止重复处理
+        if max_update_id > last_update_id:
+            with open(offset_file, 'w') as f:
+                f.write(str(max_update_id))
+            print(f"   💾 立即保存offset: {max_update_id}")
+        
+        # 然后处理所有命令
+        for update_id, text in commands_to_process:
             print(f"   📨 处理命令: {text}")
-            
             if text == '/status':
                 send_status_report()
             elif text == '/help' or text == '/start':
                 send_help_message()
             elif text == '/check':
                 send_telegram_message("⏳ 正在检查，请等待下一次定时任务（最多5分钟）")
-            
-            # 更新最大ID
-            if update_id > max_update_id:
-                max_update_id = update_id
         
-        # 保存最新ID
-        if max_update_id > last_update_id:
-            with open(offset_file, 'w') as f:
-                f.write(str(max_update_id))
-            print(f"   💾 保存offset: {max_update_id}")
-        
-        # 关键：如果处理了消息，标记处理完成，避免下次重复
-        if updates.get('result'):
-            print(f"   ✅ 已处理 {len(updates['result'])} 条消息")
+        if commands_to_process:
+            print(f"   ✅ 已处理 {len(commands_to_process)} 条消息")
         
     except Exception as e:
         print(f"⚠️ 处理Telegram命令失败: {e}")

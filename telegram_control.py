@@ -10,6 +10,7 @@ STATE_FILE = "state.json"
 CONFIG_FILE = "config.json"
 OFFSET_FILE = "offset.json"
 
+print("send test")
 
 def send(msg):
     requests.post(

@@ -83,34 +83,32 @@ def send_status_report():
     send_telegram_message("\n".join(lines))
 
 def check_and_reply_commands():
-    """检查并回复Telegram命令（防止重复发送）"""
+    """检查并回复Telegram命令"""
     if not TELEGRAM_BOT_TOKEN:
         return
     
-    # 添加一个标记，防止同一次运行重复处理
-    if hasattr(check_and_reply_commands, '_processed'):
-        return
-    check_and_reply_commands._processed = True
+    # 读取上次处理的update_id
+    offset_file = "data/offset.txt"
+    last_update_id = 0
+    try:
+        with open(offset_file, 'r') as f:
+            last_update_id = int(f.read().strip())
+    except:
+        pass
     
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/getUpdates"
     
     try:
-        response = requests.get(url, params={'timeout': 10}, timeout=15)
+        # 关键：加上offset参数，告诉Telegram哪些消息已处理
+        response = requests.get(url, params={'offset': last_update_id + 1, 'timeout': 10}, timeout=15)
         response.raise_for_status()
         updates = response.json()
         
-        if not updates.get('ok'):
+        if not updates.get('ok') or not updates.get('result'):
             return
-        
-        # 记录已处理的update_id，防止重复
-        processed_ids = set()
         
         for update in updates.get('result', []):
             update_id = update.get('update_id')
-            if update_id in processed_ids:
-                continue
-            processed_ids.add(update_id)
-            
             message = update.get('message')
             if not message:
                 continue
@@ -127,6 +125,14 @@ def check_and_reply_commands():
                 send_help_message()
             elif text == '/check':
                 send_telegram_message("⏳ 正在检查，请等待下一次定时任务（最多5分钟）")
+            
+            # 更新已处理的ID
+            if update_id > last_update_id:
+                last_update_id = update_id
+        
+        # 保存最新ID
+        with open(offset_file, 'w') as f:
+            f.write(str(last_update_id))
                 
     except Exception as e:
         print(f"⚠️ 处理Telegram命令失败: {e}")

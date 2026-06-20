@@ -27,6 +27,16 @@ UR_TARGETS = [
             "danchi": "2600"
         }
     }
+    {
+        "name": "横浜ヴェールタワー",  # 物件名称
+        "url": "https://www.ur-net.go.jp/chintai/kanto/kanagawa/40_4270.html", # 原始URL
+        "params": {
+            "block": "kanto",
+            "tdfk": "kanagawa",
+            "shisya": "40",
+            "danchi": "4270"      # 这个新物件的ID
+        }
+    }
 ]
 
 # 请求头

@@ -5,6 +5,7 @@ import requests
 BOT_TOKEN = os.environ["BOT_TOKEN"]
 CHAT_ID = os.environ["CHAT_ID"]
 
+API_URL = "https://chintai.r6.ur-net.go.jp/chintai/api/bukken/detail/detail_bukken_room/"
 STATE_FILE = "state.json"
 
 TARGETS = {
@@ -18,14 +19,10 @@ TARGETS = {
     }
 }
 
-API_URL = "https://chintai.r6.ur-net.go.jp/chintai/api/bukken/detail/detail_bukken_room/"
-
 
 def send_telegram(msg):
-    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
-
     requests.post(
-        url,
+        f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage",
         json={
             "chat_id": CHAT_ID,
             "text": msg
@@ -36,9 +33,8 @@ def send_telegram(msg):
 
 def load_state():
     if os.path.exists(STATE_FILE):
-        with open(STATE_FILE, "r", encoding="utf-8") as f:
+        with open(STATE_FILE, encoding="utf-8") as f:
             return json.load(f)
-
     return {}
 
 
@@ -56,7 +52,6 @@ def get_rooms(shisya, danchi):
     }
 
     r = requests.post(API_URL, data=payload, timeout=30)
-
     data = r.json()
 
     if data is None:
@@ -75,49 +70,75 @@ for danchi_name, target in TARGETS.items():
         target["danchi"]
     )
 
-    room_ids = set()
+    current_rooms = {}
+
+    old_rooms = old_state.get(danchi_name, {})
 
     for room in rooms:
 
         room_id = room["id"]
 
-        room_ids.add(room_id)
+        info = {
+            "name": room["name"],
+            "rent": room["rent"],
+            "type": room["type"],
+            "floorspace": room["floorspace"],
+            "floor": room["floor"]
+        }
 
-        old_ids = set(old_state.get(danchi_name, []))
+        current_rooms[room_id] = info
 
-        if room_id not in old_ids:
+        if room_id not in old_rooms:
 
-            link = (
-                "https://www.ur-net.go.jp"
-                + room["roomDetailLink"]
-            )
-
-            msg = f"""🏠 UR空室通知
+            send_telegram(
+f"""🏠【UR新房源】
 
 団地：
 {danchi_name}
 
 部屋：
-{room["name"]}
+{info['name']}
 
 間取り：
-{room["type"]}
+{info['type']}
 
 面積：
-{room["floorspace"]}
+{info['floorspace']}
 
 階数：
-{room["floor"]}
+{info['floor']}
 
 家賃：
-{room["rent"]}
+{info['rent']}
+"""
+            )
 
-詳細：
-{link}
+        else:
+
+            old_info = old_rooms[room_id]
+
+            if old_info != info:
+
+                msg = f"""🔄【房源信息变化】
+
+団地：
+{danchi_name}
+
+部屋：
+{info['name']}
 """
 
-            send_telegram(msg)
+                if old_info["rent"] != info["rent"]:
+                    msg += f"\n家賃：{old_info['rent']} → {info['rent']}"
 
-    new_state[danchi_name] = list(room_ids)
+                if old_info["type"] != info["type"]:
+                    msg += f"\n間取り：{old_info['type']} → {info['type']}"
+
+                if old_info["floorspace"] != info["floorspace"]:
+                    msg += f"\n面積：{old_info['floorspace']} → {info['floorspace']}"
+
+                send_telegram(msg)
+
+    new_state[danchi_name] = current_rooms
 
 save_state(new_state)

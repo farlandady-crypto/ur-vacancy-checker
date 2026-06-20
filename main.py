@@ -18,6 +18,7 @@ TARGETS = {
 
 stats = {"new": 0, "changed": 0, "fail": 0}
 
+print("MAIN STARTED")
 
 def send(msg):
     requests.post(

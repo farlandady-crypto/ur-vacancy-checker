@@ -29,8 +29,6 @@ Fork此仓库，GitHub Actions会自动开始运行。
 ## 命令
 
 - `/status` - 查看当前空房状态
-- `/check` - 手动触发检查
-- `/help` - 显示帮助信息
 
 ## 配置
 

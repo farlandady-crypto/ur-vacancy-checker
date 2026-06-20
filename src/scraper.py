@@ -7,7 +7,7 @@ from .config import HEADERS, UR_TARGETS
 
 def fetch_rooms(target: Dict) -> Tuple[List[Dict], str]:
     """
-    通过解析物件详情页HTML来获取空房列表
+    通过正则表达式从HTML中提取空房列表，更稳定地应对结构变化
     """
     url = target['url']
     try:
@@ -15,176 +15,54 @@ def fetch_rooms(target: Dict) -> Tuple[List[Dict], str]:
         response.raise_for_status()
         soup = BeautifulSoup(response.text, 'html.parser')
         
-        # 方法1：查找空房表格 - 根据实际页面结构
-        # UR网站的空房信息通常在 table 中，class可能包含 "vacant" 或 "room"
-        room_table = None
+        # 获取页面的文本内容，并清理多余空白
+        page_text = soup.get_text(separator=' ', strip=True)
         
-        # 尝试多种方式查找表格
-        # 1) 直接查找包含空房信息的表格
-        tables = soup.find_all('table')
-        for table in tables:
-            # 检查表格是否包含房间相关的关键词
-            table_text = table.get_text()
-            if any(keyword in table_text for keyword in ['間取図', '部屋名', '家賃', '床面積', '階数']):
-                room_table = table
-                break
+        # 查找空房信息区域 - 通常包含"空室情報"或"空室"关键词
+        vacancy_area = None
+        # 尝试在HTML中查找包含空房列表的父级元素
+        possible_sections = soup.find_all(['div', 'section', 'table'], 
+                                          string=re.compile(r'空室情報|間取図|部屋名|家賃', re.IGNORECASE))
         
-        # 2) 如果上面没找到，尝试通过class查找
-        if not room_table:
-            room_table = soup.find('table', class_=re.compile(r'vacant|room|bukken'))
-        
-        # 3) 如果还是没找到，尝试查找包含空房信息的div
-        if not room_table:
-            # 查找包含空房列表的div
-            room_containers = soup.find_all('div', class_=re.compile(r'room|vacant|bukken'))
-            for container in room_containers:
-                # 如果div内有表格，使用第一个表格
-                table_in_div = container.find('table')
-                if table_in_div:
-                    room_table = table_in_div
+        if possible_sections:
+            # 使用找到的第一个包含关键词的父元素
+            vacancy_area = possible_sections[0]
+            # 如果父元素是table，直接使用；否则在其内部查找table
+            if vacancy_area.name != 'table':
+                table_in_area = vacancy_area.find('table')
+                if table_in_area:
+                    vacancy_area = table_in_area
+        else:
+            # 如果没找到特定区域，尝试直接找所有表格
+            tables = soup.find_all('table')
+            for table in tables:
+                if re.search(r'間取図|部屋名|家賃|床面積|階数', table.get_text()):
+                    vacancy_area = table
                     break
         
-        if not room_table:
-            # 调试：打印页面标题和部分内容
-            page_title = soup.find('title')
-            title_text = page_title.get_text() if page_title else "未知"
-            print(f"   🔍 页面标题: {title_text}")
-            
-            # 检查是否真的没有空房
-            no_room_text = soup.find_all(string=re.compile(r'ご案内できるお部屋がございません|空室は前日以前の状況'))
-            if no_room_text:
+        rooms = []
+        # 如果找到了包含空房信息的表格，尝试解析它
+        if vacancy_area and vacancy_area.name == 'table':
+            rooms = parse_room_table(vacancy_area, target)
+        
+        # 如果表格解析结果为空，或者没找到表格，使用正则表达式直接从文本中提取
+        if not rooms:
+            print("   ⚠️ 表格解析为空或未找到表格，尝试使用正则表达式提取...")
+            rooms = extract_rooms_with_regex(page_text, target)
+        
+        if not rooms:
+            # 最后检查：页面是否明确提示没有空房
+            if re.search(r'ご案内できるお部屋がございません|ただいま空室はございません', page_text):
                 return [], "页面显示：目前没有可立即入住的空房"
             
-            return [], f"未找到空房表格，页面结构可能已变化。标题: {title_text}"
-        
-        # 解析表格数据
-        rooms = []
-        rows = room_table.find_all('tr')
-        
-        # 找到表头行，确定各列索引
-        header_row = None
-        header_cells = []
-        for row in rows:
-            cells = row.find_all(['th', 'td'])
-            cell_texts = [cell.get_text(strip=True) for cell in cells]
-            # 检查是否包含表头关键词
-            if any(keyword in ' '.join(cell_texts) for keyword in ['間取図', '部屋名', '家賃']):
-                header_row = row
-                header_cells = cell_texts
-                break
-        
-        # 确定各列位置
-        col_indices = {
-            'name': -1,
-            'rent': -1,
-            'type': -1,
-            'floor_space': -1,
-            'floor': -1,
-            'status': -1
-        }
-        
-        for i, cell_text in enumerate(header_cells):
-            if '部屋名' in cell_text or 'room' in cell_text.lower():
-                col_indices['name'] = i
-            elif '家賃' in cell_text or '賃料' in cell_text:
-                col_indices['rent'] = i
-            elif '間取' in cell_text or 'type' in cell_text.lower():
-                col_indices['type'] = i
-            elif '床面積' in cell_text or '面積' in cell_text:
-                col_indices['floor_space'] = i
-            elif '階数' in cell_text or '階' in cell_text:
-                col_indices['floor'] = i
-            elif '状態' in cell_text or '状況' in cell_text:
-                col_indices['status'] = i
-        
-        # 如果没找到表头，使用默认列顺序
-        if col_indices['name'] == -1:
-            # 根据观察到的典型UR表格结构：图 | 房名 | 家賃 | 間取 | 面積 | 階数
-            col_indices = {
-                'name': 1,
-                'rent': 2,
-                'type': 3,
-                'floor_space': 4,
-                'floor': 5,
-                'status': 6
-            }
-        
-        # 遍历数据行
-        for row in rows:
-            # 跳过表头行
-            if row == header_row:
-                continue
-            
-            cells = row.find_all('td')
-            if len(cells) < 5:  # 至少要有足够的数据列
-                continue
-            
-            # 提取房间信息
-            name = cells[col_indices['name']].get_text(strip=True) if col_indices['name'] < len(cells) else '未知房号'
-            rent_text = cells[col_indices['rent']].get_text(strip=True) if col_indices['rent'] < len(cells) else ''
-            type_text = cells[col_indices['type']].get_text(strip=True) if col_indices['type'] < len(cells) else ''
-            floor_space_text = cells[col_indices['floor_space']].get_text(strip=True) if col_indices['floor_space'] < len(cells) else ''
-            floor_text = cells[col_indices['floor']].get_text(strip=True) if col_indices['floor'] < len(cells) else ''
-            
-            # 提取房间ID（从链接或房名中）
-            room_id = None
-            link = row.find('a')
-            if link and link.get('href'):
-                # 尝试从URL中提取ID
-                id_match = re.search(r'/(\d+)_room\.html', link['href'])
-                if id_match:
-                    room_id = id_match.group(1)
-            
-            if not room_id:
-                # 使用房名+物件ID组合作为唯一标识
-                room_id = f"{target['params']['danchi']}_{name}"
-            
-            # 清理租金：提取数字
-            rent_clean = rent_text
-            rent_match = re.search(r'([\d,]+)円', rent_text)
-            if rent_match:
-                rent_clean = rent_match.group(1) + '円'
-            else:
-                rent_clean = rent_text or '不明'
-            
-            # 清理面积
-            floor_space_clean = floor_space_text
-            if '&#13217;' in floor_space_clean:
-                floor_space_clean = floor_space_clean.replace('&#13217;', '㎡')
-            
-            # 从租金文本中提取共益费（如果有）
-            common_fee = '不明'
-            fee_match = re.search(r'\(([\d,]+)円\)', rent_text)
-            if fee_match:
-                common_fee = fee_match.group(1) + '円'
-            
-            room = {
-                'id': room_id,
-                'name': name,
-                'rent': rent_clean,
-                'common_fee': common_fee,
-                'type': type_text,
-                'floor_space': floor_space_clean,
-                'floor': floor_text,
-                'status': '常规募集',
-                'url': link['href'] if link and link.get('href') else '',
-                'shikikin': '不明',
-                'requirement': '不明'
-            }
-            
-            # 只添加有效的房间（至少有房名）
-            if name and name not in ['', '間取図', '部屋名']:
-                rooms.append(room)
-        
-        # 如果解析出的房间数为0，尝试从页面中直接提取文本
-        if len(rooms) == 0:
-            # 查找包含"号室"的文本
-            room_texts = soup.find_all(string=re.compile(r'\d+号室'))
-            if room_texts:
-                print(f"   ⚠️ 发现可能的房间文本: {len(room_texts)} 个")
-                for text in room_texts[:3]:
-                    print(f"      - {text.strip()}")
-                return [], "发现房间文本但无法解析表格，可能页面结构有变化"
+            # 调试信息
+            title = soup.find('title')
+            title_text = title.get_text() if title else "未知"
+            print(f"   🔍 页面标题: {title_text}")
+            # 打印部分文本用于调试
+            text_sample = page_text[:500].replace('\n', ' ')
+            print(f"   📄 页面文本预览: {text_sample}...")
+            return [], f"未找到空房信息。页面标题: {title_text}"
         
         return rooms, f"发现 {len(rooms)} 套空房"
         
@@ -192,6 +70,119 @@ def fetch_rooms(target: Dict) -> Tuple[List[Dict], str]:
         return [], f"请求失败: {str(e)}"
     except Exception as e:
         return [], f"解析失败: {str(e)}"
+
+def parse_room_table(table_element, target: Dict) -> List[Dict]:
+    """尝试解析表格元素"""
+    rooms = []
+    rows = table_element.find_all('tr')
+    if len(rows) < 2:
+        return rooms
+    
+    # 获取表头
+    header_row = rows[0]
+    header_cells = header_row.find_all(['th', 'td'])
+    headers = [cell.get_text(strip=True) for cell in header_cells]
+    
+    # 确定列索引
+    col_idx = {'name': -1, 'rent': -1, 'type': -1, 'space': -1, 'floor': -1}
+    for i, h in enumerate(headers):
+        if '部屋名' in h or 'room' in h.lower():
+            col_idx['name'] = i
+        elif '家賃' in h or '賃料' in h:
+            col_idx['rent'] = i
+        elif '間取' in h:
+            col_idx['type'] = i
+        elif '床面積' in h or '面積' in h:
+            col_idx['space'] = i
+        elif '階数' in h or '階' in h:
+            col_idx['floor'] = i
+    
+    # 如果找不到表头，使用常见顺序 [图, 房名, 家賃, 間取, 面積, 階数]
+    if col_idx['name'] == -1:
+        col_idx = {'name': 1, 'rent': 2, 'type': 3, 'space': 4, 'floor': 5}
+    
+    # 遍历数据行
+    for row in rows[1:]:
+        cells = row.find_all('td')
+        if len(cells) < 5:
+            continue
+        
+        name = cells[col_idx['name']].get_text(strip=True) if col_idx['name'] < len(cells) else ''
+        # 通过房名判断是否为有效数据行（避免解析到表头或其他无关行）
+        if not name or name in ['間取図', '部屋名', ''] or not re.search(r'\d', name):
+            continue
+        
+        # 提取租金和共益费
+        rent_text = cells[col_idx['rent']].get_text(strip=True) if col_idx['rent'] < len(cells) else ''
+        rent_match = re.search(r'([\d,]+)円', rent_text)
+        rent = rent_match.group(1) + '円' if rent_match else rent_text
+        
+        fee_match = re.search(r'\(([\d,]+)円\)', rent_text)
+        common_fee = fee_match.group(1) + '円' if fee_match else '不明'
+        
+        # 提取其他信息
+        room_type = cells[col_idx['type']].get_text(strip=True) if col_idx['type'] < len(cells) else ''
+        floor_space = cells[col_idx['space']].get_text(strip=True) if col_idx['space'] < len(cells) else ''
+        floor = cells[col_idx['floor']].get_text(strip=True) if col_idx['floor'] < len(cells) else ''
+        
+        # 获取房间链接
+        link_tag = row.find('a')
+        room_link = link_tag['href'] if link_tag and link_tag.get('href') else ''
+        room_id = extract_room_id(room_link) or f"{target['params']['danchi']}_{name}"
+        
+        room = {
+            'id': room_id,
+            'name': name,
+            'rent': rent,
+            'common_fee': common_fee,
+            'type': room_type,
+            'floor_space': floor_space.replace('&#13217;', '㎡'),
+            'floor': floor,
+            'status': '常规募集',
+            'url': room_link,
+            'shikikin': '不明',
+            'requirement': '不明'
+        }
+        rooms.append(room)
+    
+    return rooms
+
+def extract_rooms_with_regex(page_text: str, target: Dict) -> List[Dict]:
+    """使用正则表达式从文本中提取房间信息"""
+    rooms = []
+    # 匹配模式：房号 | 租金(共益费) | 户型 | 面积 | 楼层
+    # 示例: "1601号室 | 202,000円 (17,600円) | 1K | 33㎡ | 16階／22階"
+    pattern = r'(\d+号室)\s*[|｜]\s*([\d,]+)円\s*\(([\d,]+)円\)\s*[|｜]\s*([^\|｜]+)\s*[|｜]\s*([\d.]+)㎡?\s*[|｜]\s*([^\|｜]+?)(?:階|階／)'
+    
+    matches = re.findall(pattern, page_text)
+    for match in matches:
+        name, rent, fee, r_type, space, floor = match
+        room_id = f"{target['params']['danchi']}_{name}"
+        rooms.append({
+            'id': room_id,
+            'name': name.strip(),
+            'rent': f"{rent}円",
+            'common_fee': f"{fee}円",
+            'type': r_type.strip(),
+            'floor_space': f"{space}㎡",
+            'floor': f"{floor}階",
+            'status': '常规募集',
+            'url': '',
+            'shikikin': '不明',
+            'requirement': '不明'
+        })
+    
+    if rooms:
+        print(f"   ✅ 通过正则表达式成功提取 {len(rooms)} 套空房")
+    
+    return rooms
+
+def extract_room_id(url: str) -> str:
+    """从URL中提取房间ID"""
+    if not url:
+        return None
+    match = re.search(r'/(\d+)_room\.html', url)
+    return match.group(1) if match else None
 
 def format_room_info(room: Dict) -> Dict:
     """格式化房间信息"""

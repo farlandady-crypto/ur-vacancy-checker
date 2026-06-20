@@ -1,5 +1,5 @@
 import os
-from typing import List
+from typing import List, Dict
 
 # Telegram配置
 TELEGRAM_BOT_TOKEN = os.environ.get('TELEGRAM_BOT_TOKEN')
@@ -12,7 +12,7 @@ UR_TARGETS = [
         "url": "https://www.ur-net.go.jp/chintai/kanto/kanagawa/40_2480.html",
         "params": {
             "block": "kanto",
-            "tdfk": "kanagawa", 
+            "tdfk": "kanagawa",
             "shisya": "40",
             "danchi": "2480"
         }
@@ -23,18 +23,18 @@ UR_TARGETS = [
         "params": {
             "block": "kanto",
             "tdfk": "kanagawa",
-            "shisya": "40", 
+            "shisya": "40",
             "danchi": "2600"
         }
-    }
+    },
     {
-        "name": "横浜ヴェールタワー",  # 物件名称
-        "url": "https://www.ur-net.go.jp/chintai/kanto/kanagawa/40_4270.html", # 原始URL
+        "name": "横浜ヴェールタワー",
+        "url": "https://www.ur-net.go.jp/chintai/kanto/kanagawa/40_4270.html",
         "params": {
             "block": "kanto",
             "tdfk": "kanagawa",
             "shisya": "40",
-            "danchi": "4270"      # 这个新物件的ID
+            "danchi": "4270"
         }
     }
 ]
@@ -49,7 +49,6 @@ HEADERS = {
 # API端点
 API_URL = "https://www.ur-net.go.jp/chintai/detail_bukken_room"
 
-# 验证配置
 def validate_config():
     """验证必要的配置是否存在（改为警告而非硬错误）"""
     missing = []
@@ -60,6 +59,5 @@ def validate_config():
     
     if missing:
         print(f"⚠️ 警告: 以下配置缺失，通知功能将不可用: {', '.join(missing)}")
-        # 不抛出异常，仅警告
     else:
         print("✅ Telegram配置完整")

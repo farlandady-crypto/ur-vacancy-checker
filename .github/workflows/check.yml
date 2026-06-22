@@ -2,7 +2,9 @@ name: UR Vacancy Checker
 
 on:
   schedule:
-    - cron: '*/10 0-10 * * *'  # UTC 1-11点 = 日本 9-20点，每10分钟
+    # 修正1：UTC 1-11点 = 日本 10-20点
+    # 修正2：改为每5分钟一次
+    - cron: '*/5 1-11 * * *'  
   workflow_dispatch:
 
 permissions:
